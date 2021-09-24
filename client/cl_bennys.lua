@@ -23,6 +23,8 @@ local originalNeonColourB = nil
 local originalXenonColour = nil
 local originalOldLivery = nil
 local originalPlateIndex = nil
+local originalXenonState = nil
+local originalTurboState = nil
 local attemptingPurchase = false
 local isPurchaseSuccessful = false
 local bennyLocation
@@ -47,6 +49,34 @@ local function isNear(pos1, pos2, distMustBe)
 	local dist = (diff.x * diff.x) + (diff.y * diff.y)
 
 	return (dist < (distMustBe * distMustBe))
+end
+
+function fixNeonColor(veh, values)
+    local colors = {}
+
+    for index, value in ipairs({GetVehicleNeonLightsColour(veh)}) do
+        colors[index] = value
+
+        if (values[index] ~= -2) then
+            colors[index] = values[index]
+        end
+    end
+
+    return colors
+end
+
+function fixNeonLights(veh, values)
+    local lights = {}
+
+    for i = 0, 3, 1 do
+        lights[i] = IsVehicleNeonLightEnabled(veh, i)
+
+        if values[i] ~= -2 then
+            lights[i] = values[i]
+        end
+    end
+
+    return lights
 end
 
 local function saveVehicle()
@@ -130,13 +160,66 @@ function AttemptPurchase(type, upgradeLevel)
 end
 
 function RepairVehicle()
-    local plyPed = PlayerPedId()
-    local plyVeh = GetVehiclePedIsIn(plyPed, false)
+    Citizen.CreateThread(function ()
+        local plyPed = PlayerPedId()
+        local plyVeh = GetVehiclePedIsIn(plyPed, false)
+	local fuel = GetVehicleFuelLevel(plyVeh)
+        local vehBodyHealth = GetVehicleBodyHealth(plyVeh)
+        local vehEngineHealth = GetVehicleEngineHealth(plyVeh)
 
-    SetVehicleFixed(plyVeh)
-	SetVehicleDirtLevel(plyVeh, 0.0)
-    SetVehiclePetrolTankHealth(plyVeh, 4000.0)
-    TriggerEvent('veh.randomDegredation',10,plyVeh,3)
+        local missingBodyHealth = 1000.0 - vehBodyHealth
+        local missingEngineHealth = 1000.0 - vehEngineHealth
+
+        SetVehicleHandbrake(plyVeh, true)
+
+        if (missingEngineHealth > 50) then
+			local finished = Progressbar(5000 + (missingEngineHealth / 50), "Repairing engine...")
+
+            local amountRepaired = missingEngineHealth * finished / 100
+
+            SetVehicleEngineHealth(plyVeh, vehEngineHealth + amountRepaired)
+
+            SetVehiclePetrolTankHealth(plyVeh, 4000.0)
+        end
+
+        if missingBodyHealth > 50 then
+			local finished = Progressbar(5000 + (missingBodyHealth / 50), "Repairing body...")
+
+            local amountRepaired = missingBodyHealth * finished / 100
+
+            SetVehicleDeformationFixed(plyVeh)
+
+            SetVehicleBodyHealth(plyVeh, vehBodyHealth + amountRepaired)
+        end
+
+        if (GetVehicleBodyHealth(plyVeh) >= 900 and GetVehicleEngineHealth(plyVeh) >= 900) then
+            SetVehicleFixed(plyVeh)
+
+            SetVehicleDirtLevel(plyVeh, 0.0)
+        end
+
+        SetVehicleHandbrake(plyVeh, false)
+    end)
+end
+
+function Progressbar(duration, label)
+	local retval = nil
+	QBCore.Functions.Progressbar("repair", label, duration, false, true, {
+		disableMovement = true,
+		disableCarMovement = true,
+		disableMouse = false,
+		disableCombat = true,
+	}, {}, {}, {}, function()
+		retval = true
+	end, function()
+		retval = false
+	end)
+
+	while retval == nil do
+		Wait(1)
+	end
+
+	return retval
 end
 
 function GetCurrentMod(id)
@@ -363,7 +446,7 @@ function RestoreOriginalWheels()
     if originalWheelCategory ~= nil then
         SetVehicleMod(plyVeh, originalWheelCategory, originalWheel, originalCustomWheels)
         
-        if GetVehicleClass(plyVeh) == 8 then --Motorcycle
+        if GetVehicleClass(plyVeh) == 8 or IsSpecialMotorcycle() then --Motorcycle
             SetVehicleMod(plyVeh, 24, originalWheel, originalCustomWheels)
         end
 
@@ -417,6 +500,18 @@ function RestorePlateIndex()
     SetVehicleNumberPlateTextIndex(plyVeh, originalPlateIndex)
 end
 
+function RestoreXenonState()
+    local plyPed = PlayerPedId()
+    local plyVeh = GetVehiclePedIsIn(plyPed, false)
+    ToggleVehicleMod(plyVeh, 22, originalXenonState)
+end
+
+function RestoreTurboState()
+    local plyPed = PlayerPedId()
+    local plyVeh = GetVehiclePedIsIn(plyPed, false)
+    ToggleVehicleMod(plyVeh, 18, originalTurboState)
+end
+
 function PreviewMod(categoryID, modID)
     local plyPed = PlayerPedId()
     local plyVeh = GetVehiclePedIsIn(plyPed, false)
@@ -444,6 +539,28 @@ function PreviewWindowTint(windowTintID)
     end
 
     SetVehicleWindowTint(plyVeh, windowTintID)
+end
+
+function PreviewXenonState(state)
+    local plyPed = PlayerPedId()
+    local plyVeh = GetVehiclePedIsIn(plyPed, false)
+
+    if originalXenonState == nil then
+        originalXenonState = IsToggleModOn(plyVeh, 22)
+    end
+
+    ToggleVehicleMod(plyVeh, 22, state)
+end
+
+function PreviewTurboState(state)
+    local plyPed = PlayerPedId()
+    local plyVeh = GetVehiclePedIsIn(plyPed, false)
+
+    if originalTurboState == nil then
+        originalTurboState = IsToggleModOn(plyVeh, 18)
+    end
+
+    ToggleVehicleMod(plyVeh, 18, state)
 end
 
 function PreviewColour(paintType, paintCategory, paintID)
@@ -491,7 +608,7 @@ function PreviewWheel(categoryID, wheelID, wheelType)
     SetVehicleWheelType(plyVeh, wheelType)
     SetVehicleMod(plyVeh, categoryID, wheelID, doesHaveCustomWheels)
 
-    if GetVehicleClass(plyVeh) == 8 then --Motorcycle
+    if GetVehicleClass(plyVeh) == 8 or IsSpecialMotorcycle() then --Motorcycle
         SetVehicleMod(plyVeh, 24, wheelID, doesHaveCustomWheels)
     end
 end
@@ -562,6 +679,7 @@ function ApplyMod(categoryID, modID)
 
     if categoryID == 18 then
         ToggleVehicleMod(plyVeh, categoryID, modID)
+        originalTurboState = modID
     elseif categoryID == 11 or categoryID == 12 or categoryID== 13 or categoryID == 15 or categoryID == 16 then --Performance Upgrades
         originalCategory = categoryID
         originalMod = modID
@@ -644,7 +762,7 @@ function ApplyWheel(categoryID, wheelID, wheelType)
     SetVehicleWheelType(plyVeh, wheelType)
     SetVehicleMod(plyVeh, categoryID, wheelID, doesHaveCustomWheels)
     
-    if GetVehicleClass(plyVeh) == 8 then --Motorcycle
+    if GetVehicleClass(plyVeh) == 8 or IsSpecialMotorcycle() then --Motorcycle
         SetVehicleMod(plyVeh, 24, wheelID, doesHaveCustomWheels)
     end
 end
@@ -655,7 +773,7 @@ function ApplyCustomWheel(state)
 
     SetVehicleMod(plyVeh, 23, GetVehicleMod(plyVeh, 23), state)
     
-    if GetVehicleClass(plyVeh) == 8 then --Motorcycle
+    if GetVehicleClass(plyVeh) == 8 or IsSpecialMotorcycle() then --Motorcycle
         SetVehicleMod(plyVeh, 24, GetVehicleMod(plyVeh, 24), state)
     end
 end
@@ -684,7 +802,7 @@ end
 function ApplyXenonLights(category, state)
     local plyPed = PlayerPedId()
     local plyVeh = GetVehiclePedIsIn(plyPed, false)
-
+    originalXenonState = state
     ToggleVehicleMod(plyVeh, category, state)
 end
 
@@ -873,7 +991,6 @@ AddEventHandler("qb-customs:purchaseFailed", function()
     attemptingPurchase = false
     QBCore.Functions.Notify("Not enough money", "error")
 end)
-
 
 --helper function 
 
